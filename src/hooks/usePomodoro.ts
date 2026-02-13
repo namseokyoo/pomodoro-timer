@@ -30,7 +30,7 @@ export function usePomodoro(): UsePomodoroReturn {
   const [completedSessions, setCompletedSessions] = useState(0);
   const [isInitialized, setIsInitialized] = useState(false);
 
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const workerRef = useRef<Worker | null>(null);
   const originalTitleRef = useRef<string>('Pomodoro Timer');
 
   // Initialize from localStorage
@@ -73,33 +73,33 @@ export function usePomodoro(): UsePomodoroReturn {
     };
   }, [timeRemaining, mode, isRunning, isInitialized]);
 
-  // Timer logic
+  // Initialize Web Worker
   useEffect(() => {
-    if (!isRunning) {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      return;
-    }
-
-    intervalRef.current = setInterval(() => {
-      setTimeRemaining((prev) => {
-        if (prev <= 1) {
-          // Timer completed
-          handleTimerComplete();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
+    workerRef.current = new Worker('/timer-worker.js');
+    workerRef.current.onmessage = (e) => {
+      const { remaining } = e.data;
+      if (typeof remaining === 'number') {
+        // Use the worker's authoritative remaining time (drift-corrected)
+        setTimeRemaining(Math.max(0, remaining));
       }
     };
+
+    return () => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+
+  // Start/stop Web Worker based on isRunning state
+  useEffect(() => {
+    if (!workerRef.current) return;
+
+    if (isRunning) {
+      workerRef.current.postMessage({ type: 'start', timeRemaining });
+    } else {
+      workerRef.current.postMessage({ type: 'stop' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRunning]);
 
   const handleTimerComplete = useCallback(() => {
